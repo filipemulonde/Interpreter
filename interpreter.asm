@@ -21,12 +21,13 @@ None db  0
 Nome db  7
 
 ; Token types
-interger: db "INTERGER",0
-plus    : db "PLUS",0
-eof     : db "EOF",0 
+t_integer: db "INTERGER",0
+t_plus    : db "PLUS",0
+t_eof     : db "EOF",0 
+t_minus   : db "MINUS",0  
 
-text  db "5+5",0
-
+text:  db "   400  +  400  ",0 
+ 
 struc Token
     t_value resq  1
     t_type  resq  1
@@ -39,6 +40,7 @@ struc Interpreter_state
     I_text resq  1
     I_pos resq  1
     I_current_token resq 1
+    I_current_char resb  1  
     
     align 8
 endstruc
@@ -47,14 +49,17 @@ Interpreter_state_pointer dq 0
 
 Left  dq  0
 Righ  dq  0
-int8b   db  0
+int8b   dq  0
 
-String_to_parseLen equ 3
+String_to_parseLen equ 200 
 
 segment .bss
-stringTo_Print resb  10
-chr             resb 1
-string_to_parse resb String_to_parseLen+2
+stringTo_Print  resb  10
+chr             resb  1
+string_to_parse resb   String_to_parseLen+2
+multidigit      resb  20   
+
+C_char db 0
 
 segment .text 
 ;****************************************************************
@@ -70,9 +75,10 @@ segment .text
 global Tokens
 Tokens:
  
-mov qword [rdi+t_type], rsi 
+lea r15, qword [rdi+t_type]
+mov [r15], rsi 
 
-movzx r9, byte [rdx]
+mov r9,rdx
 mov qword [rdi+t_value], r9 
  
 mov rax, rdi
@@ -92,11 +98,11 @@ mov rax, SYS_brk
 mov rsi, rdi
 mov rdi,0
 syscall
- 
+push rax 
 lea rdi,[rax+rsi]
 mov rax, SYS_brk
 syscall
-
+pop rax
 ret
 ;**********************************************
 ;Returns the length of the given string
@@ -151,10 +157,10 @@ Isdigit:
 
 xor eax, eax
 cmp byte [rdi], "0"
-jle Isdigit.endOfFunc
+jl Isdigit.endOfFunc
 
 cmp byte [rdi], "9"
-jge Isdigit.endOfFunc
+jg Isdigit.endOfFunc
 mov rax,1 
 .endOfFunc:
 ret
@@ -188,32 +194,40 @@ ret
 ; If no conversion can be performed, ​0​ is returned.
 global ascTointerger
 ascTointerger:
-
+xor r8d,r8d
+xor eax,eax
+push rax
+.whileTrue:
+cmp r8, rsi
+jg ascTointerger.endOfFunc
 call Isdigit
 cmp rax, 1
-jne  Isdigit.endOfFunc
-xor eax,eax
+jne  ascTointerger.endOfFunc
+pop rax
 xor r9d, r9d
 mov r9b, byte [rdi]
 sub r9b, "0"
 imul rax, 10
 add rax, r9
-mov [int8b], rax
+inc rdi
+inc r8
+push rax
+jmp ascTointerger.whileTrue
 
 .endOfFunc:
-
+pop qword [int8b]
 ret
 
 ;********************************************************
 ;  
-; Converts a interger to a string
+; Converts a integer to a string
 ; Arguments
 ;   1) interger value(rdi)
 ;   2) string adress (rsi)
 ;   Return(rax) the adress of the string 
 
-global intergerToAsc
-intergerToAsc:
+global integerToAsc
+integerToAsc:
 
 xor r9d, r9d  ; digitCount
 xor r10d,r10d
@@ -225,7 +239,7 @@ mov rcx, 10
     push rdx
     inc r9
     cmp rax,0
-    jne intergerToAsc.divideLoop
+    jne integerToAsc.divideLoop
 .popLoop:
     xor r8d,r8d
     pop r8 ;charDigit
@@ -234,7 +248,7 @@ mov rcx, 10
     inc r10
     dec r9
     cmp r9,0
-    jne intergerToAsc.popLoop
+    jne integerToAsc.popLoop
     mov byte [rsi + r10], 0
     mov rax,rsi
 ret 
@@ -257,8 +271,8 @@ jne Eat.Token_not_Equal
 mov r10, qword [Interpreter_state_pointer]
 
 mov rdi,qword [r10+I_text]
-lea rsi, qword [r10+I_current_token]
-lea rdx, qword [r10+I_pos]
+lea rsi, qword [r10+I_pos]
+lea rdx, qword [r10+I_current_char]
 
  
 call get_next_token
@@ -282,116 +296,127 @@ mov rdi, Token_size
 call Heap_Allocation
 mov [Token_Pointer], rax
 
-mov r8, [Token_Pointer]
+mov r14, rax 
+
+push rbx 
+
+mov rbx, [Token_Pointer]
 
 mov r10, qword [Interpreter_state_pointer]
 
-mov rdi,qword [r10+I_text]
-lea rsi, qword [r10+I_current_token]
-lea rdx, qword [r10+I_pos]
+mov rdi, qword [r10+I_text]
+lea rsi, qword [r10+I_pos]
+lea rdx, qword [r10+I_current_char]
  
+call get_next_token 
 
-call get_next_token
- 
-mov r9, qword [r8+t_value]
+mov r9, qword [rbx+t_value]
 mov qword [Left], r9
 
-lea rdi, [interger]
+lea rdi, [t_integer]
 call Eat
 
-mov r9, [r8+t_value] ; op
+mov r9, [rbx+t_value] ; op
 mov r10, r9
-mov rdi, plus
+push r10
+
+cmp r9, "+"
+jne Expr.Is_not_plus
+
+mov rdi, t_plus
+call Eat
+ 
+jmp Expr.next_op
+
+.Is_not_plus:
+
+mov rdi, t_minus
 call Eat
 
-mov r9, [r8+t_value] 
+.next_op:
+mov r9, [rbx+t_value] 
 mov [Righ], r9
-mov rdi, interger
+mov rdi, t_integer
 call Eat
 
 mov rax, qword [Left]
-add rax, qword [Righ]
 
+pop r10
+cmp r10, "+"
+jne  Expr.sub_op
+add rax, qword [Righ]
+jmp Expr.endOfFunc
+.sub_op:
+sub rax, qword [Righ]
+
+.endOfFunc:
+pop rbx
 ret
 ;*****************************************************
 ;Lexical analyzer, This method is responsible for breaking a sentence apart into tokens. One token at a time.
 ; Arguments
 ;   1) text pointer (rdi)
-;   2) position (rdx)
-;   3) current_token(rsi)
+;   2) position (rsi)
+;   3) current_char(rdx)
 
 global get_next_token
 get_next_token:
 
-mov rcx, rdi
-call strLen
-dec rax
-mov rdi, rcx
-cmp qword [rdx], rax
-jle get_next_token.endOFLine
+
+
+cmp byte [rdx], NULL
+je get_next_token.is_none
  
-mov rdi,   [Token_Pointer]
-lea rsi,   [eof]
-lea rdx,   [None] 
-call Tokens
-jmp get_next_token.endOfFunc
+ call skip_whitespace
 
-.endOFLine:
+ push rdi
+ mov rdi,rdx
+ call Isdigit
+ pop rdi
+ cmp rax,1
+ jne get_next_token.is_not_digit
+ call integer
  
-push r15
-mov rcx, qword [rdx]
-lea r15,[rdi + rcx]  ;current_char 
-mov rdi,r15
+ mov rdi, qword [Token_Pointer]
+ mov rsi, t_integer
+ mov rdx, qword [int8b] 
+ call Tokens
+ jmp get_next_token.endOfFunc  
+ .is_not_digit:
 
-call Isdigit
-cmp rax,1 
-jne get_next_token.isNotDigit
- 
-mov r10, qword [Interpreter_state_pointer]
-inc qword [r10+I_pos]
+cmp byte [rdx],"+"
+jne get_next_token.Is_not_plus
+ call Advance
+ mov rdi, qword [Token_Pointer]
+ mov rsi, t_plus
+ mov rdx,  "+"
+ call Tokens
+ jmp get_next_token.endOfFunc 
+ .Is_not_plus:
 
-call ascTointerger
-mov rdi, [Token_Pointer]
-mov rsi, interger
-mov rdx, int8b
-call Tokens
+ cmp byte [rdx],"-"
+ jne get_next_token.Is_not_minus
+ call Advance
+ mov rdi, qword [Token_Pointer]
+ mov rsi, t_minus
+ mov rdx, "-"
+ call Tokens
+ jmp get_next_token.endOfFunc 
+.Is_not_minus:
 
-jmp get_next_token.endOfFunc
+cmp byte [rdx], NULL
+je get_next_token.endOfFunc
+mov rdi, Error_parsing
+call error_message 
 
-.isNotDigit:
+.is_none:
+ mov rdi, qword [Token_Pointer]
+ mov rsi, None
+ mov rdx, 0
+ call Tokens
 
-call IsAlpha
-cmp rax, 1
-jne get_next_token.isNotAlpha
-mov r10, qword [Interpreter_state_pointer]
-inc qword [r10+I_pos]
-mov rdi, [Token_Pointer]
-mov rsi, interger
-mov rdx,  r15
-call Tokens
-jmp get_next_token.endOfFunc
+ .endOfFunc
 
-.isNotAlpha:
-
-cmp byte [rdi], "+"
-jne  get_next_token.isNotPlus
- 
-mov r10, qword [Interpreter_state_pointer]
-inc qword [r10+I_pos] 
-
-mov rdi, [Token_Pointer]
-mov rsi, plus
-mov rdx, r15
-call Tokens
-
-jmp get_next_token.endOfFunc
- 
-.isNotPlus:
-mov rdi,Error_parsing
-call error_message
-
-.endOfFunc:
-pop r15
 ret
 ;****************************************
 ;Arguments
@@ -401,16 +426,20 @@ global Interpreter
 Interpreter:
 
 mov r8, rdi
-mov rdi, 24
+mov rdi, Interpreter_state_size
 call Heap_Allocation
 mov qword [Interpreter_state_pointer], rax
- 
-mov r10, qword [Interpreter_state_pointer]
 
-mov qword [r10+I_text], r8
-mov qword [r10+I_pos], 0
-mov qword [r10+I_current_token], None
+mov r13, rax 
+
+mov qword [rax+I_text], r8
+mov qword [rax+I_pos], 0
+mov qword [rax+I_current_token], None
  
+mov rdi, [rax+I_text]
+movzx r9, byte [rdi]
+mov byte [rax+I_current_char], r9b
+lea rbp, [rax+I_current_char]
 call Expr
 ret
 
@@ -459,14 +488,18 @@ global ReadCharacters
 ReadCharacters:
 
 mov r8, 0
+push rbx
+mov rbx, rdi 
+
 .Loop_ReadCharacter:
+   
     mov rax, Sys_read
     mov rdi, STDIN
-    lea rsi, [chr]
+    lea rsi, qword [chr]
     mov rdx, 1
     syscall
-
-    mov al, byte [chr]
+    
+    mov al,byte [chr]
     cmp al, LF
     je ReadCharacters.readDone
     
@@ -474,45 +507,158 @@ mov r8, 0
     cmp r8, String_to_parseLen
     jge  ReadCharacters.readDone
 
-    mov byte [rdi], al
-    inc rdi
+    mov byte [rbx], al
+    inc rbx
     jmp ReadCharacters.Loop_ReadCharacter
 
-    .readDone:
+.readDone:
+    mov byte [rbx],0
+    pop rbx
 ret
+;********************************************
+;Advance- Advance the 'pos' pointer and set the 'current_char' variable
+;Current char adress (rdx)
+;position adress (rsi)
+;text adress (rdi)
+
+global Advance
+Advance:
+
+inc qword [rsi]
+push rsi
+push rdx
+push rdi
+
+call strLen
+dec rax
+
+pop rdi
+pop rdx
+pop rsi
+
+mov r9, qword [rsi]
+mov r8b, byte [rdi + r9] 
+
+cmp qword [rsi], rax
+jg Advance.Greater
+
+mov byte [rdx], r8b 
+
+jmp Advance.endOfFunc
+
+.Greater:
+
+mov byte [rdx], NULL
+
+.endOfFunc:
+
+ret
+
+;*****************************************
+; Skip_whitespace
+; Args
+;  1) text (rdi)
+;  2) current char (rdx)
+;  3) position (rsi)
+
+global skip_whitespace
+skip_whitespace:
+xor r9, r9
+.whileTrue:
+cmp byte [rdx], 32
+jne skip_whitespace.endOfFunc  
+inc r9
+push r9
+call Advance
+pop r9
+jmp skip_whitespace.whileTrue
+
+.endOfFunc:
+
+ret
+;***************************************************
+; Integer """Return a (multidigit) integer consumed from the input."""
+;  1) text (rdi)
+;  2) current char (rdx)
+;  3) position (rsi)
+global integer
+integer:
+xor r8, r8
+.whileTrue:
+
+push rdi
+push rdx
+push rsi
+push r8
+
+mov  rdi,rdx 
+call Isdigit
+
+pop r8
+pop rsi
+pop rdx
+pop rdi
+
+cmp rax, 1
+jne integer.convert
+
+mov r9b, byte [rdx]
+mov [multidigit+r8],r9b
+
+inc r8 
+push r8
+
+cmp r8,19 
+jg integer.error
+call Advance
+pop r8
+jmp integer.whileTrue
+
+.error:
+pop r8
+mov rdi, Error_parsing
+call error_message
+jmp integer.endOfFunc
+
+.convert:
+
+cmp r8, NULL
+je integer.endOfFunc
+
+mov rdi,multidigit
+dec r8
+mov rsi,r8  
+call ascTointerger 
+
+.endOfFunc:
+
+ret 
+
 ;*****************************************
 ; Main
 global _start
 _start:
 
-mov rax, Sys_read
-mov rdi, STDIN
-lea rsi, [string_to_parse]
-mov rdx, String_to_parseLen
-syscall
+
+mov rdi,string_to_parse
+call ReadCharacters
 
 mov rdi, string_to_parse
 call Interpreter
 
 mov rdi, rax
 mov rsi, stringTo_Print
-call intergerToAsc
+call integerToAsc
 
 mov rax, SYS_write
 mov rdi, STDOUT
 mov rsi, stringTo_Print
 mov rdx, r10
 syscall
-
-mov rax, SYS_write
-mov rdi, STDOUT
-mov rsi, newLine
-mov rdx, 1
-syscall
-
+  
 mov rax, SYS_exit
 mov rdi, EXIT_SUCCESS
 syscall
-
+ret
 
 
