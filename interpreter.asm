@@ -17,17 +17,15 @@ FALSE equ 0
 Error_parsing:  db  "Error parsing input",0  
 newLine:        db  10, NULL
 None db  0
-
-Nome db  7
-
+ 
 ; Token types
 t_integer: db "INTERGER",0
 t_plus    : db "PLUS",0
 t_eof     : db "EOF",0 
 t_minus   : db "MINUS",0  
 
-text:  db "   400  +  400  ",0 
- 
+interP db ">>> "
+
 struc Token
     t_value resq  1
     t_type  resq  1
@@ -47,8 +45,7 @@ endstruc
 
 Interpreter_state_pointer dq 0 
 
-Left  dq  0
-Righ  dq  0
+ 
 int8b   dq  0
 
 String_to_parseLen equ 200 
@@ -233,6 +230,14 @@ xor r9d, r9d  ; digitCount
 xor r10d,r10d
 mov rax, rdi 
 mov rcx, 10
+
+test rdi, rdi
+jns integerToAsc.divideLoop
+    neg rdi
+    mov byte [rsi], "-" 
+    inc r10
+    mov rax, rdi
+
 .divideLoop:
     xor rdx, rdx 
     div  rcx
@@ -241,7 +246,6 @@ mov rcx, 10
     cmp rax,0
     jne integerToAsc.divideLoop
 .popLoop:
-    xor r8d,r8d
     pop r8 ;charDigit
     add r8, "0"
     mov byte [rsi + r10], r8b
@@ -296,12 +300,11 @@ mov rdi, Token_size
 call Heap_Allocation
 mov [Token_Pointer], rax
 
-mov r14, rax 
-
 push rbx 
-
+push r14
+ 
 mov rbx, [Token_Pointer]
-
+ 
 mov r10, qword [Interpreter_state_pointer]
 
 mov rdi, qword [r10+I_text]
@@ -310,46 +313,45 @@ lea rdx, qword [r10+I_current_char]
  
 call get_next_token 
 
-mov r9, qword [rbx+t_value]
-mov qword [Left], r9
+call term
+mov r14, rax
 
-lea rdi, [t_integer]
-call Eat
+.while_loop:
 
-mov r9, [rbx+t_value] ; op
-mov r10, r9
-push r10
-
-cmp r9, "+"
+mov rdi, qword [rbx+t_type]
+lea rsi, qword [t_plus] 
+call strcmp 
+cmp rax, 1
 jne Expr.Is_not_plus
 
 mov rdi, t_plus
 call Eat
- 
-jmp Expr.next_op
+call term
+add r14, rax 
+jmp Expr.End_of_loop
 
 .Is_not_plus:
 
+mov rdi, qword [rbx+t_type]
+lea rsi, qword [t_minus] 
+call strcmp 
+cmp  rax, 1
+jne Expr.outOfLoop
 mov rdi, t_minus
 call Eat
+call term
+sub r14, rax
 
-.next_op:
-mov r9, [rbx+t_value] 
-mov [Righ], r9
-mov rdi, t_integer
-call Eat
+.End_of_loop:
 
-mov rax, qword [Left]
+jmp Expr.while_loop
 
-pop r10
-cmp r10, "+"
-jne  Expr.sub_op
-add rax, qword [Righ]
-jmp Expr.endOfFunc
-.sub_op:
-sub rax, qword [Righ]
+.outOfLoop:
 
+mov rax, r14
+ 
 .endOfFunc:
+pop r14
 pop rbx
 ret
 ;*****************************************************
@@ -361,8 +363,6 @@ ret
 
 global get_next_token
 get_next_token:
-
-
 
 cmp byte [rdx], NULL
 je get_next_token.is_none
@@ -491,7 +491,15 @@ mov r8, 0
 push rbx
 mov rbx, rdi 
 
+ mov rax, SYS_write
+ mov rdi, STDOUT
+ mov rsi, interP
+ mov rdx, 4
+ syscall
+
 .Loop_ReadCharacter:
+
+   
    
     mov rax, Sys_read
     mov rdi, STDIN
@@ -632,12 +640,34 @@ call ascTointerger
 
 .endOfFunc:
 
+mov r13, rax
 ret 
+;*****************************************
+; """Return an INTEGER token value"""
+; return by value on (rax)
+
+global term
+term:
+mov r8, qword [Token_Pointer] 
+mov rax,  qword [r8+t_value]
+push rax
+lea rdi, [t_integer]
+call Eat
+pop rax
+
+ret
 
 ;*****************************************
 ; Main
 global _start
 _start:
+
+
+mov RAX, -45
+test rax, rax
+not rax
+inc rax
+test rax,rax  
 
 
 mov rdi,string_to_parse
@@ -656,6 +686,12 @@ mov rsi, stringTo_Print
 mov rdx, r10
 syscall
   
+mov rax, SYS_write
+mov rdi, STDOUT
+mov rsi, newLine
+mov rdx, 1
+syscall
+
 mov rax, SYS_exit
 mov rdi, EXIT_SUCCESS
 syscall
